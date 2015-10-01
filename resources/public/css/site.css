@@ -1,0 +1,14 @@
+.container {
+    padding: 40px 15px;
+    text-align: center;
+    width: auto;
+}
+
+div#tetris {
+    margin-top: 10px;
+    margin-bottom: 10px;
+}
+
+div#tetris > svg {
+    margin: 10px;
+}
