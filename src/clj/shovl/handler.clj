@@ -1,14 +1,17 @@
 (ns shovl.handler
   (:require [bidi.ring :refer [make-handler resources-maybe]]
-            [ring.middleware.defaults :refer [site-defaults wrap-defaults]]
+            [cheshire.core :as json]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
+            [environ.core :refer [env]]
             [hiccup.core :refer [html]]
             [hiccup.page :refer [include-js include-css]]
+            [clj-yaml.core :as yaml]
             [prone.middleware :refer [wrap-exceptions]]
+            [ring.middleware.defaults :refer [site-defaults wrap-defaults]]
             [ring.middleware.reload :refer [wrap-reload]]
-            [ring.util.response :refer [content-type response]]
-            [environ.core :refer [env]]
-            [cheshire.core :as json]
-            [shovl.tetris-producer :as tetris]))
+            [ring.util.response :refer [content-type response header]]
+            [shovl.tetris.producer :as tetris]))
 
 (def home-page
   (html
@@ -20,16 +23,34 @@
      (include-css (if (env :dev) "css/site.css" "css/site.min.css"))
      (include-css "css/bootstrap.min.css")]
     [:body
-     [:div#app.container {:role "main"} [:h3 "ClojureScript has not been compiled!"]
-      [:p "please run "
-       [:b "lein figwheel"]
-       " in order to start the compiler"]]
+     [:div#app.container {:role "main"}
+      [:h3 "ClojureScript has not been compiled!"]
+      [:p "please run " [:b "lein figwheel"] " in order to start the compiler"]]
      (include-js "js/app.js")]]))
+
+(defn blog-post-file->map [f]
+  (let [file-string (slurp f)
+        [_ metadata-string markdown-string] (str/split file-string #"---" 3)
+        metadata (yaml/parse-string metadata-string)]
+    (merge {:title "Default Post Title"
+            :content markdown-string}
+           metadata)))
+
+(def shovl-posts
+  (->> (file-seq (io/file (io/resource "_posts")))
+       (remove #(.isDirectory %))
+       (mapv blog-post-file->map)))
+
+(defn default-headers [response]
+  (-> response
+      (header "Access-Control-Allow-Origin" "http://shovl.herokuapp.com")
+      (header "Access-Control-Allow-Methods" "GET, POST, OPTIONS")))
 
 (defn static-html-handler [html]
   (fn [_]
-    (-> home-page
+    (-> html
         response
+        default-headers
         (content-type "text/html"))))
 
 (defn static-json-handler [json]
@@ -37,12 +58,16 @@
     (-> json
         json/generate-string
         response
+        default-headers
         (content-type "application/json"))))
 
 (def routes (make-handler
              ["/" {"" (static-html-handler home-page)
                    "css" (resources-maybe {:prefix "public/css/"})
                    "js" (resources-maybe {:prefix "public/js/"})
+                   "img" (resources-maybe {:prefix "public/img/"})
+                   "audio" (resources-maybe {:prefix "public/audio/"})
+                   "posts" (static-json-handler shovl-posts)
                    "tetris" (static-json-handler tetris/problem-0-boards)}]))
 
 (def app
