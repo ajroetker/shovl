@@ -38,6 +38,7 @@
                                     [:cljsbuild :builds :app :compiler :output-dir]
                                     [:cljsbuild :builds :app :compiler :output-to]]
 
+  :resource-paths ["resources" "resources/_posts"]
   :source-paths ["src/clj" "src/cljc"]
 
   :minify-assets

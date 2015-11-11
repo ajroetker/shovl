@@ -28,8 +28,8 @@
       [:p "please run " [:b "lein figwheel"] " in order to start the compiler"]]
      (include-js "js/app.js")]]))
 
-(defn blog-post-file->map [f]
-  (let [file-string (slurp f)
+(defn path->response-map [f]
+  (let [file-string (slurp (io/resource f))
         [_ metadata-string markdown-string] (str/split file-string #"---" 3)
         metadata (yaml/parse-string metadata-string)]
     (merge {:title "Default Post Title"
@@ -37,9 +37,8 @@
            metadata)))
 
 (def shovl-posts
-  (->> (file-seq (io/file (io/resource "_posts")))
-       (remove #(.isDirectory %))
-       (mapv blog-post-file->map)))
+  (->> ["_posts/2015-10-11-Welcome-To-The-Party.md"]
+       (mapv path->response-map)))
 
 (defn default-headers [response]
   (-> response
