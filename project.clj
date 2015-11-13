@@ -5,6 +5,7 @@
             :url "http://www.eclipse.org/legal/epl-v10.html"}
 
   :dependencies [[org.clojure/clojure "1.7.0"]
+                 [hexlib "0.1.0-SNAPSHOT"]
                  [ring-server "0.4.0"]
                  [reagent "0.5.1"]
                  [reagent-forms "0.5.11"]

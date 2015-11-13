@@ -8,7 +8,7 @@
             [goog.events :as events]
             [goog.history.EventType :as EventType]
             [clojure.walk :as walk]
-            [shovl.tetris.consumer :as tetris]))
+            [shovl.tetris :as tetris]))
 
 (def posts-state (atom []))
 
@@ -21,7 +21,7 @@
        :headers {:Access-Control-Request-Methods "GET, POST, OPTIONS"}}))
 
 (defn audio-component [src-file]
-  [:audio {:controls "controls"}
+  [:audio {:controls "controls" :style {:max-width "100%"}}
    [:source {:src (str "audio/" src-file)
              :type "audio/mpeg"}]])
 

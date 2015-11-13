@@ -1,12 +1,11 @@
-(ns shovl.tetris.consumer
+(ns shovl.tetris
   (:require [cljsjs.d3]
-            [cljs.pprint]
             [goog.string :as gstring]
             [ajax.core :refer [GET]]
-            [shovl.hex :as hex]
             [clojure.walk :as walk]
             [reagent.core :as reagent :refer [atom]]
-            [shovl.tetris :as tetris]))
+            [hexlib.core :as hex]
+            [hexlib.tetris :as tetris]))
 
 (def purple [204 102 255])
 (def bright-red [255 0 0])
@@ -111,7 +110,9 @@
       [:div.panel-body
        [:div {:style {:text-align "left"}}
         [:h1 "Hexogonal Tetris"]
-        [:p "This is a fun little game I made based off of the 2015 ICFP problem."]
+        [:p
+         "This is a fun little game I made based off of the "
+         [:a {:href "http://2015.icfpcontest.org/"} "2015 ICFP problem."]]
         [:p
          "Click on the hex-board to focus your browser on the svg element and you can also use "
          [:ul
@@ -137,6 +138,7 @@
                members-set (set members)]
            [:div {:style {:width "100%"}}
             [:svg {:style {:width width
+                           :max-width "100%"
                            :height height}
                    :tabIndex 0
                    :on-key-down #(case (.-which %)
@@ -159,7 +161,7 @@
              (reagent-circle-element (cube->pixel layout-pointy pivot))]])
          (if (:game-over @board-state)
            [:div.btn-group {:style {:margin-top "15px" :margin-bottom "15px"}}
-            [:button#new-game.btn.btn-primary {:on-click load-tetris-game} "New game"]]
+            [:button#new-game.btn.btn-default {:on-click load-tetris-game} "New game"]]
            [:div.btn-group {:style {:margin-top "15px" :margin-bottom "15px"}}
             [:button#cw.btn.btn-default {:on-click (make-game-move :cw)} (gstring/unescapeEntities "&#x21BB;")]
             [:button#w.btn.btn-default {:on-click (make-game-move :w)} (gstring/unescapeEntities "&#x2190;")]

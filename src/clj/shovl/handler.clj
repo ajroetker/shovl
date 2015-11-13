@@ -11,7 +11,7 @@
             [ring.middleware.defaults :refer [site-defaults wrap-defaults]]
             [ring.middleware.reload :refer [wrap-reload]]
             [ring.util.response :refer [content-type response header]]
-            [shovl.tetris.producer :as tetris]))
+            [shovl.tetris :as tetris]))
 
 (def home-page
   (html
