@@ -8,8 +8,9 @@
             [hiccup.page :refer [include-js include-css]]
             [clj-yaml.core :as yaml]
             [prone.middleware :refer [wrap-exceptions]]
-            [ring.middleware.defaults :refer [site-defaults wrap-defaults]]
+            [ring.middleware.resource :refer [wrap-resource]]
             [ring.middleware.reload :refer [wrap-reload]]
+            [ring.middleware.params :refer [wrap-params]]
             [ring.util.response :refer [content-type response header]]
             [shovl.tetris :as tetris]))
 
@@ -45,30 +46,54 @@
       (header "Access-Control-Allow-Origin" "http://shovl.herokuapp.com")
       (header "Access-Control-Allow-Methods" "GET, POST, OPTIONS")))
 
-(defn static-html-handler [html]
-  (fn [_]
-    (-> html
-        response
-        default-headers
-        (content-type "text/html"))))
+(defn html-response [html]
+  (-> html
+      response
+      default-headers
+      (content-type "text/html")))
 
-(defn static-json-handler [json]
-  (fn [_]
-    (-> json
-        json/generate-string
-        response
-        default-headers
-        (content-type "application/json"))))
+(defn json-response [json]
+  (-> json
+      json/generate-string
+      response
+      default-headers
+      (content-type "application/json")))
+
+
+(defn parse-int [s]
+  (Integer. (re-find  #"\d+" s )))
+
+(def high-scores (atom {}))
+(defn maybe-add-score [high-scores user score]
+  (cond
+    (contains? high-scores user)
+    (if (> score (get high-scores user))
+      (assoc high-scores user score)
+      high-scores)
+    (< (count high-scores) 10)
+    (assoc high-scores user score)
+    :else
+    (let [[[_ lower-highest-score] :as high-scores-ascending] (sort-by val < high-scores)]
+      (if (> score lower-highest-score)
+        (into {} (-> high-scores-ascending rest (conj [user score])))
+        high-scores))))
 
 (def routes (make-handler
-             ["/" {"" (static-html-handler home-page)
+             ["/" {"" (fn [_] (html-response home-page))
                    "css" (resources-maybe {:prefix "public/css/"})
                    "js" (resources-maybe {:prefix "public/js/"})
                    "img" (resources-maybe {:prefix "public/img/"})
                    "audio" (resources-maybe {:prefix "public/audio/"})
-                   "posts" (static-json-handler shovl-posts)
-                   "tetris" (static-json-handler tetris/problem-0-boards)}]))
+                   "scores" {:get {"" (fn [_] (json-response @high-scores))}
+                             :post {"" (wrap-params (fn [{:keys [params] :as req}]
+                                                      (let [{:strs [user score]} params]
+                                                        (->> (parse-int score)
+                                                             (swap! high-scores maybe-add-score user)
+                                                             json-response))))}}
+                   "posts" (fn [_] (json-response shovl-posts))
+                   "tetris" (fn [_] (json-response tetris/problem-0-boards))}]))
 
 (def app
-  (let [handler (wrap-defaults #'routes site-defaults)]
-    (if (env :dev) (-> handler wrap-exceptions wrap-reload) handler)))
+  (let [handler (wrap-resource #'routes "public")]
+    (cond-> handler
+      (env :dev) (-> wrap-exceptions wrap-reload))))

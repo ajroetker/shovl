@@ -20,7 +20,7 @@
                  [hiccup "1.0.5"]
                  [environ "1.0.1"]
                  [cljsjs/d3 "3.5.5-3"]
-                 [cljs-ajax "0.3.14"]
+                 [cljs-ajax "0.5.1"]
                  [org.clojure/clojurescript "1.7.48" :scope "provided"]]
 
   :plugins [[lein-environ "1.0.1"]

@@ -14,10 +14,9 @@
 
 (defn load-shovl-posts []
   (GET "http://shovl.herokuapp.com/posts"
-      {:handler (fn [response]
-                  (swap! posts-state concat (-> response
-                                                js->clj
-                                                walk/keywordize-keys)))
+      {:handler #(swap! posts-state concat %)
+       :keywords? true
+       :response-format :json
        :headers {:Access-Control-Request-Methods "GET, POST, OPTIONS"}}))
 
 (defn audio-component [src-file]

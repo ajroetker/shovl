@@ -1,9 +1,10 @@
 (ns shovl.tetris
   (:require [cljsjs.d3]
             [goog.string :as gstring]
-            [ajax.core :refer [GET]]
+            [ajax.core :refer [GET POST]]
             [clojure.walk :as walk]
             [reagent.core :as reagent :refer [atom]]
+            [hexlib.renderer :as renderer]
             [hexlib.core :as hex]
             [hexlib.tetris :as tetris]))
 
@@ -26,7 +27,7 @@
 
 (defn reagent-path-element [hexagon-data color]
   [:path {:key (random-uuid)
-          :d (draw-hexagon hexagon-data)
+          :d (draw-hexagon (clj->js hexagon-data))
           :stroke "black"
           :stroke-width 3
           :fill (render-color color)}])
@@ -37,136 +38,175 @@
             :r "4px"
             :fill "black"}])
 
-(def sqrt-3 (.sqrt js/Math 3.0))
-(def orientation-pointy {:f0 sqrt-3 :f1 (/ sqrt-3 2.0) :f2 0.0 :f3 (/ 3.0 2.0)
-                        :b0 (/ sqrt-3 3.0) :b1 (/ (- 1.0) 3.0) :b2 0.0 :b3 (/ 2.0 3.0)
-                        :start-angle 0.5})
-
-(def layout-pointy {:orientation orientation-pointy
+(def layout-pointy {:orientation renderer/orientation-pointy
                     :size [20.0 20.0]
                     :origin [27.0 28.0]})
 
-(defn cube->pixel [layout [x _ z]]
-  (let [{{:keys [f0 f1 f2 f3]} :orientation
-         [size-x size-y] :size
-         [origin-x origin-y] :origin} layout]
-    [(+ origin-x (* size-x (+ (* f0 x) (* f1 z))))
-     (+ origin-y (* size-y (+ (* f2 x) (* f3 z))))]))
-
-(defn pixel->cube [layout [x y]]
-  (let [{{:keys [b0 b1 b2 b3]} :orientation
-         [size-x size-y] :size
-         [origin-x origin-y] :origin} layout
-        pt-x (/ (- x origin-x) size-x)
-        pt-y (/ (- y origin-y) size-y)
-        cube-x (+ (* b0 pt-x) (* b1 pt-y))
-        cube-z (+ (* b2 pt-x) (* b3 pt-y))]
-    [cube-x (- (+ cube-x cube-z)) cube-z]))
-
-(defn cube-corner-offset [layout corner]
-  (let [{{:keys [start-angle]} :orientation
-         [size-x size-y] :size} layout
-        angle (* 2.0 (.-PI js/Math) (/ (+ corner start-angle) 6.0))]
-    [(* size-x (.cos js/Math angle))
-     (* size-y (.sin js/Math angle))]))
-
-(defn polygon-corners [layout cube]
-  (let [[center-x center-y] (cube->pixel layout cube)]
-    (apply array
-           (for [corner (range 6)
-                 :let [[offset-x offset-y] (cube-corner-offset layout corner)]]
-             #js {:x (+ offset-x center-x)
-                  :y (+ offset-y center-y)}))))
-
 (def board-state (atom {}))
+(def waiting-for-user (atom true))
+(def high-scores (atom {}))
+(defn high-scores-table [high-scores]
+  [:ol {:style {:width "50%"
+                :margin "auto"
+                :text-align "left"
+                :font-weight "bold"
+                :overflow "scroll"}}
+   (for [[user score] (sort-by second > high-scores)]
+     [:li {:key (random-uuid)}
+      (str user ": " score)])])
+(def user (atom ""))
 
 (defn make-game-move [command]
-  (fn []
-    (when-not (:game-over @board-state)
-      (swap! board-state
-             (fn [board]
-               (tetris/board-transition board command))))))
+  (when-not (:game-over @board-state)
+    (swap! board-state
+           (fn [board]
+             (tetris/board-transition board command)))))
+
+(defn load-tetris-scores [user]
+  (POST "http://shovl.herokuapp.com/scores"
+      {:params {:user user
+                :score (tetris/score-game @board-state)}
+       :format :raw
+       :response-format :json
+       :handler #(reset! high-scores %)
+       :headers {:Access-Control-Request-Methods "GET, POST, OPTIONS"}})
+  (reset! waiting-for-user false))
+
 
 (defn load-tetris-game []
   (GET "http://shovl.herokuapp.com/tetris"
-      {:handler (comp #(reset! board-state %)
-                      walk/keywordize-keys
-                      first
-                      js->clj)
-       :headers {:Access-Control-Request-Methods "GET, POST, OPTIONS"}}))
+      {:handler #(reset! board-state (first %))
+       :keywords? true
+       :response-format :json
+       :headers {:Access-Control-Request-Methods "GET, POST, OPTIONS"}})
+  (reset! waiting-for-user true))
+
+(def arcade-navbar
+  [:div#navbar.row
+   [:div.col-md-12
+    [:ul.nav.nav-tabs.nav-justified
+     [:li {:role "presentation"} [:a {:href "#/"} "Home"]]
+     [:li.active {:role "presentation"} [:a {:href "#/tetris"} "Arcade"]]]]])
+
+(def tetris-description
+  [:div {:style {:text-align "left"}}
+   [:h1 "Hexogonal Tetris"]
+   [:p "This is a fun little game I made based off of the "
+    [:a {:href "http://2015.icfpcontest.org/"} "2015 ICFP problem."]]
+   [:p "Be careful not to let a unit end up in the same position twice, otherwise " [:strong "GAME OVER!"]]
+   [:p "Click on the hex-board to focus your browser on the svg element and you can also use "
+    [:ul
+     [:li [:code "a"] " for left, "]
+     [:li [:code "s"] " for left-down, "]
+     [:li [:code "d"] " for right-down, "]
+     [:li [:code "f"] " for right, "]
+     [:li [:code "j"] " for clockwise rotation, and "]
+     [:li [:code "k"] " for counter-clockwise rotation."]]]])
+
+(defn key-code->command [key-code]
+  (case key-code
+    83 :sw
+    65 :w
+    70 :e
+    68 :se
+    74 :cw
+    75 :ccw
+    nil))
+
+(defn raw-unit-odd-r->cube
+  "Don't center the about the pivot.
+  Used for rendering the cells."
+  [unit]
+
+  (-> unit
+      (update :pivot hex/odd-r->cube)
+      (update :members (partial map hex/odd-r->cube))))
+
+(defn board-svg [board-state]
+  (let [{:keys [grid unit]} board-state
+        cols (count (first grid))
+        rows (count grid)
+        {:keys [pivot members]} (raw-unit-odd-r->cube unit)
+        members-set (set members)]
+    [:div {:style {:width "100%"}}
+     [:svg {:style {:max-width "100%"
+                    :overflow "scroll"
+                    :width (* 35 (inc cols))
+                    :height (* 30 (inc rows))}
+            :tabIndex 0
+            :on-key-down #(some-> (.-which %)
+                                  key-code->command
+                                  make-game-move)}
+      (for [[row-num row] (map-indexed vector grid)
+            [col-num filled] (map-indexed vector row)
+            :let [cube (hex/odd-r->cube [col-num row-num])
+                  color (cond filled dark-grey
+                              (contains? members-set cube) bright-red
+                              :else melon)]]
+        (reagent-path-element (renderer/polygon-corners layout-pointy cube) color))
+      (reagent-circle-element (renderer/cube->pixel layout-pointy pivot))]]))
+
+(def board-btn-group
+  [:div.btn-group {:style {:margin-top "15px" :margin-bottom "15px"}}
+   [:button.btn.btn-default {:on-click #(make-game-move :cw)} (gstring/unescapeEntities "&#x21BB;")]
+   [:button.btn.btn-default {:on-click #(make-game-move :w)} (gstring/unescapeEntities "&#x2190;")]
+   [:button.btn.btn-default {:on-click #(make-game-move :sw)} (gstring/unescapeEntities "&#x2199;")]
+   [:button.btn.btn-default {:on-click #(make-game-move :se)} (gstring/unescapeEntities "&#x2198;")]
+   [:button.btn.btn-default {:on-click #(make-game-move :e)} (gstring/unescapeEntities "&#x2192;")]
+   [:button.btn.btn-default {:on-click #(make-game-move :ccw)} (gstring/unescapeEntities "&#x21BA;")]])
+
+(defn todo-input [{:keys [title on-save on-stop]}]
+  (let [val (atom title)
+        stop #(do (reset! val "")
+                  (when on-stop (on-stop)))
+        save #(let [v (-> @val str clojure.string/trim)]
+                (when-not (empty? v) (on-save v))
+                (stop))]
+    (fn [props]
+      [:input.form-control
+       (merge props
+              {:type "text" :value @val :on-blur save
+               :on-change #(reset! val (-> % .-target .-value))
+               :on-key-down #(case (.-which %)
+                               13 (save)
+                               27 (stop)
+                               nil)})])))
 
 (defn tetris-page []
   [:div
-   [:div#navbar.row
-    [:div.col-md-12
-     [:ul.nav.nav-tabs.nav-justified
-      [:li {:role "presentation"} [:a {:href "#/"} "Home"]]
-      [:li.active {:role "presentation"} [:a {:href "#/tetris"} "Arcade"]]]]]
+   arcade-navbar
    [:div#tetris.row
     [:div.col-md-12
      [:div.panel.panel-default
       [:div.panel-heading {:style {:text-align "left"}}
        [:h3.panel-title "Hexagonal Tetris"]]
       [:div.panel-body
-       [:div {:style {:text-align "left"}}
-        [:h1 "Hexogonal Tetris"]
-        [:p
-         "This is a fun little game I made based off of the "
-         [:a {:href "http://2015.icfpcontest.org/"} "2015 ICFP problem."]]
-        [:p
-         "Click on the hex-board to focus your browser on the svg element and you can also use "
-         [:ul
-          [:li [:code "a"] " for left, "]
-          [:li [:code "s"] " for left-down, "]
-          [:li [:code "d"] " for right-down, "]
-          [:li [:code "f"] " for right, "]
-          [:li [:code "j"] " for clockwise rotation, and "]
-          [:li [:code "k"] " for counter-clockwise rotation."]]]]
-       [:div.panel.panel-default {:style {:text-align "center"}}
-        [:div.panel-body
-         (if (:game-over @board-state)
-           [:h2 "Game over: " (tetris/score-game @board-state)]
-           [:h2 "Score: " (tetris/score-game @board-state)])
-         (let [{:keys [grid unit]} @board-state
-               cols (count (first grid))
-               rows (count grid)
-               width (+ 35 (* 20 sqrt-3 cols))
-               height (+ 5 25 (* 40 0.75 rows))
-               {:keys [pivot members]} (-> unit
-                                           (update :pivot hex/odd-r->cube)
-                                           (update :members (partial map hex/odd-r->cube)))
-               members-set (set members)]
-           [:div {:style {:width "100%"}}
-            [:svg {:style {:width width
-                           :max-width "100%"
-                           :height height}
-                   :tabIndex 0
-                   :on-key-down #(case (.-which %)
-                                   83 ((make-game-move :sw))
-                                   65 ((make-game-move :w))
-                                   70 ((make-game-move :e))
-                                   68 ((make-game-move :se))
-                                   74 ((make-game-move :cw))
-                                   75 ((make-game-move :ccw))
-                                   nil)}
-             (for [[row-num row] (map-indexed vector grid)
-                   [col-num filled] (map-indexed vector row)
-                   :let [cube (hex/odd-r->cube [col-num row-num])
-                         is-pivot? (= pivot cube)
-                         is-member? (contains? members-set cube)
-                         color (cond is-member? bright-red
-                                     filled dark-grey
-                                     :else melon)]]
-               (reagent-path-element (polygon-corners layout-pointy cube) color))
-             (reagent-circle-element (cube->pixel layout-pointy pivot))]])
-         (if (:game-over @board-state)
+       tetris-description
+       [:div {:style {:text-align "center"}}
+        [:h2 (if (:game-over @board-state) "Final Score: " "Score: ")
+         (tetris/score-game @board-state)]
+        [board-svg @board-state]
+        (when-not (:game-over @board-state)
+          board-btn-group)
+        ;; We render the "New Game" button when the board-state is empty for
+        ;; development purposes. Reagent won't re-initialize the `init!` hooks
+        ;; on restart so we need to be able to get the board ourselves.
+        (when (or (empty? @board-state)
+                  (:game-over @board-state))
+          [:div {:style {:width "100%"}}
            [:div.btn-group {:style {:margin-top "15px" :margin-bottom "15px"}}
-            [:button#new-game.btn.btn-default {:on-click load-tetris-game} "New game"]]
-           [:div.btn-group {:style {:margin-top "15px" :margin-bottom "15px"}}
-            [:button#cw.btn.btn-default {:on-click (make-game-move :cw)} (gstring/unescapeEntities "&#x21BB;")]
-            [:button#w.btn.btn-default {:on-click (make-game-move :w)} (gstring/unescapeEntities "&#x2190;")]
-            [:button#sw.btn.btn-default {:on-click (make-game-move :sw)} (gstring/unescapeEntities "&#x2199;")]
-            [:button#se.btn.btn-default {:on-click (make-game-move :se)} (gstring/unescapeEntities "&#x2198;")]
-            [:button#e.btn.btn-default {:on-click (make-game-move :e)} (gstring/unescapeEntities "&#x2192;")]
-            [:button#ccw.btn.btn-default {:on-click (make-game-move :ccw)} (gstring/unescapeEntities "&#x21BA;")]])]]]]]]])
+            [:button.btn.btn-default {:on-click load-tetris-game} "New game"]]])
+        (when (and (:game-over @board-state)
+                   (not @waiting-for-user))
+          [:h3 {:style {:margin-top "5px"}} "High Scores"])
+        (when (:game-over @board-state)
+          [:div {:style {:width "100%"}}
+           (if @waiting-for-user
+             [:div
+              [:div.col-md-4]
+              [:div.input-group.col-md-4
+               [:span.input-group-addon "Submit your score:"]
+               [todo-input {:placeholder "Enter your name."
+                            :on-save load-tetris-scores}]]]
+             [high-scores-table @high-scores])])]]]]]])
 
